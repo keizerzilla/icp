@@ -1,14 +1,24 @@
-import numpy as np
-import time
 import icp
+import time
 
-# Constants
-N = 10                                    # number of random points in the dataset
-num_tests = 100                             # number of test iterations
-dim = 3                                     # number of dimensions of the points
-noise_sigma = .01                           # standard deviation error to be added
-translation = .1                            # max translation of the test set
-rotation = .1                               # max rotation (radians) of the test set
+
+# number of random points in the dataset
+N = 1000
+
+# number of test iterations
+num_tests = 100
+
+# number of dimensions of the points
+dim = 3
+
+# standard deviation error to be added
+noise_sigma = .01
+
+# max translation of the test set
+translation = .1
+
+# max rotation (radians) of the test set
+rotation = .1
 
 
 def rotation_matrix(axis, theta):
@@ -16,20 +26,17 @@ def rotation_matrix(axis, theta):
     a = np.cos(theta/2.)
     b, c, d = -axis*np.sin(theta/2.)
 
-    return np.array([[a*a+b*b-c*c-d*d, 2*(b*c-a*d), 2*(b*d+a*c)],
-                  [2*(b*c+a*d), a*a+c*c-b*b-d*d, 2*(c*d-a*b)],
-                  [2*(b*d-a*c), 2*(c*d+a*b), a*a+d*d-b*b-c*c]])
+    return np.array([[a*a+b*b-c*c-d*d, 2*(b*c-a*d),     2*(b*d+a*c)],
+                     [2*(b*c+a*d),     a*a+c*c-b*b-d*d, 2*(c*d-a*b)],
+                     [2*(b*d-a*c),     2*(c*d+a*b),     a*a+d*d-b*b-c*c]])
 
 
 def test_best_fit():
-
     # Generate a random dataset
     A = np.random.rand(N, dim)
-
+    
     total_time = 0
-
     for i in range(num_tests):
-
         B = np.copy(A)
 
         # Translate
@@ -54,25 +61,25 @@ def test_best_fit():
 
         # Transform C
         C = np.dot(T, C.T).T
+        
+        # T should transform B (or C) to A
+        assert np.allclose(C[:,0:3], A, atol=6*noise_sigma)
+        
+        # t and t1 should be inverses
+        assert np.allclose(-t1, t, atol=6*noise_sigma)
+        
+        # R and R1 should be inverses
+        assert np.allclose(R1.T, R, atol=6*noise_sigma)
 
-        assert np.allclose(C[:,0:3], A, atol=6*noise_sigma) # T should transform B (or C) to A
-        assert np.allclose(-t1, t, atol=6*noise_sigma)      # t and t1 should be inverses
-        assert np.allclose(R1.T, R, atol=6*noise_sigma)     # R and R1 should be inverses
-
-    print('best fit time: {:.3}'.format(total_time/num_tests))
-
-    return
+    print("best fit time: {:.3}".format(total_time/num_tests))
 
 
 def test_icp():
-
     # Generate a random dataset
     A = np.random.rand(N, dim)
 
     total_time = 0
-
     for i in range(num_tests):
-
         B = np.copy(A)
 
         # Translate
@@ -101,15 +108,19 @@ def test_icp():
         # Transform C
         C = np.dot(T, C.T).T
 
-        assert np.mean(distances) < 6*noise_sigma                   # mean error should be small
-        assert np.allclose(T[0:3,0:3].T, R, atol=6*noise_sigma)     # T and R should be inverses
-        assert np.allclose(-T[0:3,3], t, atol=6*noise_sigma)        # T and t should be inverses
+        # mean error should be small
+        assert np.mean(distances) < 6*noise_sigma
+        
+        # T and R should be inverses
+        assert np.allclose(T[0:3,0:3].T, R, atol=6*noise_sigma)
+        
+        # T and t should be inverses
+        assert np.allclose(-T[0:3,3], t, atol=6*noise_sigma)
 
-    print('icp time: {:.3}'.format(total_time/num_tests))
-
-    return
+    print("icp time: {:.3}".format(total_time/num_tests))
 
 
 if __name__ == "__main__":
     test_best_fit()
     test_icp()
+
