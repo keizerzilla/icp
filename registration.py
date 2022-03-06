@@ -14,42 +14,78 @@ def best_fit_transform(A, B):
     
     Returns
     -------
-    T: (m+1)x(m+1) homogeneous transformation matrix that maps A on to B.
     R: mxm rotation matrix.
     t: mx1 translation vector.
     """
-
-    assert A.shape == B.shape
-
+    
     # get number of dimensions
     m = A.shape[1]
-
+    
     # translate points to their centroids
     centroid_A = np.mean(A, axis=0)
     centroid_B = np.mean(B, axis=0)
     AA = A - centroid_A
     BB = B - centroid_B
-
+    
     # rotation matrix
-    H = np.dot(AA.T, BB)
-    U, S, Vt = np.linalg.svd(H)
-    R = np.dot(Vt.T, U.T)
-
-    # special reflection case
+    H = np.matmul(AA.T, B)
+    U, S, V = np.linalg.svd(H)
+    R = np.matmul(V.T, U.T)
+    
     if np.linalg.det(R) < 0:
-       Vt[m-1,:] *= -1
-       R = np.dot(Vt.T, U.T)
-
+       V[m-1,:] *= -1
+       R = np.matmul(V.T, U.T)
+    
     # translation
-    t = centroid_B.T - np.dot(R, centroid_A.T)
+    t = centroid_B - np.matmul(R, centroid_A)
+    
+    return R, t
 
-    # homogeneous transformation
-    T = np.identity(m+1)
-    T[:m, :m] = R
-    T[:m, m] = t
 
-    return T, R, t
+def angle_norm(n, x):
+    # Ângulos que os pontos de uma nuvem 'x' fazem com um plano de normal 'n'
+    
+    prod = n * x
+    num = np.abs(prod.sum(axis=1))
+    den = np.linalg.norm(x, axis=1) * np.linalg.norm(n)
+    
+    return np.arcsin(num / den)
 
+
+def cloud_preproc(cloud):
+    # Converte nuvem cartesiana 'cloud' em representação RABG
+    
+    cloud = cloud - np.mean(cloud, axis=0)
+    _, _, v = np.linalg.svd(cloud, full_matrices=False)
+    angles = np.apply_along_axis(angle_norm, 1, v, cloud).T
+    distances = np.linalg.norm(cloud, axis=1)
+    rhos = distances / np.amax(distances)
+    rhos = rhos.reshape((-1, 1)) # <- talvez nem precise, heim
+    
+    #return np.concatenate((rhos, angles), axis=1)
+    return angles
+
+
+def singular_dir(cloud):
+    # @TODO
+    
+    cloud = cloud - np.mean(cloud, axis=0)
+    _, _, v = np.linalg.svd(cloud, full_matrices=False)
+    
+    return v
+
+
+def preproc_feat(cloud, v):
+    # @TODO
+    
+    cloud = cloud - np.mean(cloud, axis=0)
+    angles = np.apply_along_axis(angle_norm, 1, v, cloud).T
+    #distances = np.linalg.norm(cloud, axis=1)
+    #rhos = distances / np.amax(distances)
+    #rhos = rhos.reshape((-1, 1)) # <- talvez nem precise, heim
+    
+    #return np.concatenate((rhos, angles), axis=1)
+    return angles
 
 def nearest_neighbor(src, dst):
     """
@@ -65,17 +101,23 @@ def nearest_neighbor(src, dst):
     distances: Euclidean distances of the nearest neighbor.
     indices: dst indices of the nearest neighbor.
     """
-
-    assert src.shape == dst.shape
-
+    
+    #a = cloud_preproc(src)
+    #b = cloud_preproc(dst)
+    
+    v_d = singular_dir(dst)
+    
+    a = preproc_feat(src, v_d)
+    b = preproc_feat(dst, v_d)
+    
     neigh = NearestNeighbors(n_neighbors=1)
-    neigh.fit(dst)
-    distances, indices = neigh.kneighbors(src, return_distance=True)
+    neigh.fit(b)
+    distances, indices = neigh.kneighbors(a, return_distance=True)
     
     return distances.ravel(), indices.ravel()
 
 
-def icp(A, B, init_pose=None, max_iterations=20, tolerance=0.001):
+def icp(A, B, max_iterations=20, tolerance=0.001):
     """
     The Iterative Closest Point method: finds best-fit transform that maps
     points A on to points B.
@@ -84,55 +126,44 @@ def icp(A, B, init_pose=None, max_iterations=20, tolerance=0.001):
     ----------
     A: Nxm numpy array of source mD points.
     B: Nxm numpy array of destination mD point.
-    init_pose: (m+1)x(m+1) homogeneous transformation.
     max_iterations: exit algorithm after max_iterations.
     tolerance: convergence criteria.
     
     Returns
     -------
-    T: final homogeneous transformation that maps A on to B.
-    distances: Euclidean distances (errors) of the nearest neighbor.
+    R: mxm rotation matrix.
+    t: mx1 translation vector.
     i: number of iterations to converge.
     """
-
-    assert A.shape == B.shape
-
+    
     # get number of dimensions
     m = A.shape[1]
-
+    
     # make points homogeneous, copy them to maintain the originals
-    src = np.ones((m+1, A.shape[0]))
-    dst = np.ones((m+1, B.shape[0]))
-    src[:m,:] = np.copy(A.T)
-    dst[:m,:] = np.copy(B.T)
-
-    # apply the initial pose estimation
-    if init_pose is not None:
-        src = np.dot(init_pose, src)
-
+    src = np.copy(A)
+    dst = np.copy(B)
+    
     prev_error = 0
-
     for i in range(max_iterations):
         # find the nearest neighbors between the current source and destination
         # points
-        distances, indices = nearest_neighbor(src[:m,:].T, dst[:m,:].T)
-
+        distances, indices = nearest_neighbor(src, dst)
+        
         # compute the transformation between the current source and nearest
         # destination points
-        T, _, _ = best_fit_transform(src[:m,:].T, dst[:m,indices].T)
-
+        R, t = best_fit_transform(src, dst[indices])
+        
         # update the current source
-        src = np.dot(T, src)
-
+        src = np.matmul(src, R.T) + t
+        
         # check error
         mean_error = np.mean(distances)
         if np.abs(prev_error - mean_error) < tolerance:
             break
         
         prev_error = mean_error
-
+    
     # calculate final transformation
-    T, _, _ = best_fit_transform(A, src[:m,:].T)
-
-    return T, distances, i
-
+    R, t = best_fit_transform(A, src)
+    
+    return R, t, i
